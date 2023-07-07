@@ -3,6 +3,12 @@
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include "arduino_secrets.h"
+#include "Adafruit_Keypad.h"
+#include <Adafruit_NeoPixel.h>
+#define PIN        41 // On Trinket or Gemma, suggest changing this to 1
+
+// How many NeoPixels are attached to the Arduino?
+#define NUMPIXELS 10 // Popular NeoPixel ring size
 
 // Update these with values suitable for your hardware/network.
 byte mac[]    = {  0xDE, 0xED, 0xBA, 0xFE, 0xFE, 0xBA };
@@ -13,6 +19,21 @@ IPAddress myDns(192, 168, 0, 1);
 char ssid[] = WSSID;    // your SSID
 char pass[] = WPSWD;       // your SSID Password
 
+const byte ROWS = 4; // rows
+const byte COLS = 4; // columns
+//define the symbols on the buttons of the keypads
+char keys[ROWS][COLS] = {
+  {'1','2','3','A'},
+  {'4','5','6','B'},
+  {'7','8','9','C'},
+  {'*','0','#','D'}
+};
+byte rowPins[ROWS] = {33, 34, 35, 36}; //connect to the row pinouts of the keypad
+byte colPins[COLS] = {37, 38, 39, 40}; //connect to the column pinouts of the keypad
+//initialize an instance of class NewKeypad
+Adafruit_Keypad customKeypad = Adafruit_Keypad( makeKeymap(keys), rowPins, colPins, ROWS, COLS);
+Adafruit_NeoPixel pixels(NUMPIXELS, PIN, NEO_RGB + NEO_KHZ800);
+
 WiFiClient wClient;
 PubSubClient client(wClient);
 
@@ -22,6 +43,7 @@ long currentCode = CODE;
 bool stateArmed = false;
 bool stateAlert = false;
 unsigned long lastTimer = 0UL;
+String keyBuffer = "";
 
 boolean reconnect() {
   if (client.connect("arduinoClient", "mqtt_devices", "10994036")) {
@@ -59,6 +81,9 @@ void callback(char* topic, byte* payload, unsigned int length) {
 
 
 void setup() {
+    pixels.begin();
+    pixels.clear();
+    pixels.show();
   //Serial.begin(9600);
   pinMode(13,OUTPUT);
   digitalWrite(13,LOW);
@@ -80,7 +105,7 @@ void setup() {
   delay(1500);
   lastReconnectAttempt = 0;
 
-  for (int i=22; i <= 42; i++) {
+  for (int i=22; i <= 32; i++) {
     pinMode(i,INPUT_PULLUP);
   }
 }
@@ -101,15 +126,25 @@ void loop() {
     client.loop();
   }
 
-  for (int i=22; i <= 42; i++) {
+  for (int i=22; i <= 32; i++) {
     if (digitalRead(i) == LOW) {
         if (stateArmed == true) {
-            stateAlert = true;
+            pixels.setPixelColor(i-22, pixels.Color(255, 0, 0));
+
+
         } else {
             // TODO: notification tone
+            pixels.setPixelColor(i-22, pixels.Color(0, 0, 0));
+        }
+    } else {
+        if (stateArmed == true) {
+            pixels.setPixelColor(i-22, pixels.Color(0, 255, 0));
+        } else {
+            pixels.setPixelColor(i-22, pixels.Color(0, 0, 255));
         }
     }
   }
+  pixels.show();
 
   if (millis() - lastTimer >= 500) {
     lastTimer = millis();
@@ -128,4 +163,39 @@ void loop() {
     strState.toCharArray(sz, 32);
     client.publish("alarmdecoder/panel",sz);
   }
+    customKeypad.tick();
+
+    while(customKeypad.available()){
+        keypadEvent e = customKeypad.read();
+        Serial.print((char)e.bit.KEY);
+        if(e.bit.EVENT == KEY_JUST_RELEASED) {
+            char tmpChar = (char)e.bit.KEY;
+            switch(tmpChar) {
+            case 'A':
+                //arm alarm
+                alarmSetState("ARM_AWAY", keyBuffer);
+                keyBuffer = "";
+                break;
+            case 'B':
+                // backspace
+                keyBuffer.remove(keyBuffer.length()-1)
+                break;
+            case 'C':
+                // cancel
+                keyBuffer = "";
+
+                break;
+            case 'D':
+                //disarm alarm
+                alarmSetState("DISARM", keyBuffer);
+                break;
+            default:
+                //all other keys sent to String
+                keyBuffer += tmpChar;
+                break;
+            }
+        }
+    }
+
+
 }
